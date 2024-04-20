@@ -105,16 +105,19 @@ pub fn xlsx_convert(
     workbook.finish();
 
     let reading_sheet = workbook.get_worksheet(1);
-    let sheet = reading_sheet.unwrap();
-    let default_row_hight = sheet.get_default_row();
+    let sheet = match reading_sheet {
+      Ok(s) =>  s,
+      Err(e) => return Err(error_text(&format!("{:?}", e))),
+    };
 
+    let default_row_hight = sheet.get_default_row();
+/* 
     println!(
         "Rows {} -> ? ( {} )",
         sheet.max_row(),
-        //        formatted_row.len(),
         default_row_hight
     );
-
+ */
     let mut hights = Vec::<f64>::new();
     for _ in 0..sheet.max_row() {
         hights.push(default_row_hight);
@@ -130,14 +133,10 @@ pub fn xlsx_convert(
     writer.write(line.as_bytes())?;
     writer.write(bounds.as_bytes())?;
 
-    /*     // todo test
-       writer.write("|1|2|3\r".as_bytes())?;
-       writer.write("|4|5|6\r".as_bytes())?;
-
-       writer.write(bounds.as_bytes())?;
-    */
     for row in 0..sheet.max_row() {
+/* 
         println!("Row {} ({})", row, hights[row as usize]);
+ */        
         for col in 0..sheet.max_column() {
             if col < sheet.max_column() {
                 writer.write("|".as_bytes())?;
@@ -155,17 +154,18 @@ pub fn xlsx_convert(
                 bg_color = ff.fg_color.clone();
                 bg_bg_color = ff.bg_color.clone();
             }
-
+/* 
             let cell_format_string = format!(
                 "Text-Color = {:?}        bg = {:?}        bg_bg = {:?}",
                 text_color, bg_color, bg_bg_color
             );
+ */            
             let cell_text = cell_content.text;
             let text = match cell_text {
                 Some(t) => t,
-                None => "-".to_owned(),
+                None => "".to_owned(),
             };
-
+/* 
             println!(
                 "{} ({}) -> {}     Format: {}",
                 col,
@@ -173,6 +173,7 @@ pub fn xlsx_convert(
                 text,
                 cell_format_string
             );
+ */            
             writer.write(text.as_bytes())?;
         }
 
@@ -187,8 +188,11 @@ pub fn xlsx_convert(
 const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 fn main() -> std::io::Result<()> {
     let (in_file_name, out_file_name) = (
-        Path::new("./tests/xlsx/business-budget.xlsx"),
-        Path::new("./examples/accounting.adoc"),
+        // Path::new("./tests/xlsx/yearly-calendar.xlsx"),
+        // Path::new("./tests/xlsx/business-budget.xlsx"),
+        Path::new("./tests/xlsx/accounting.xlsx"),
+        Path::new("./examples/_test.adoc"),
+        
     );
 
     println!(

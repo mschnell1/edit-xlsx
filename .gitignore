@@ -11,3 +11,5 @@
 #*.bat
 /examples/demo.rs
 **/.DS_Store
+examples/accounting.adoc
+examples/_test.adoc
