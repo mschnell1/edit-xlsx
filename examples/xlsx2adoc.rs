@@ -33,6 +33,36 @@ pub fn tab_header(widths: &Vec<f64>) -> String {
     }
     out + "\"]\r"
 }
+
+const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
+fn main() -> std::io::Result<()> {
+    let (in_file_name, out_file_name) = (
+        // Path::new("./tests/xlsx/yearly-calendar.xlsx"),
+        // Path::new("./tests/xlsx/business-budget.xlsx"),
+        Path::new("./tests/xlsx/accounting.xlsx"),
+        Path::new("./examples/_test.adoc"),
+        
+    );
+
+    println!(
+        "{} {} -> {}",
+        CARGO_PKG_NAME,
+        in_file_name.display(),
+        out_file_name.display()
+    );
+
+    xlsx_convert(&in_file_name, &out_file_name)?;
+    Ok(())
+}
+
+
+
+macro_rules! print_debug {
+    ($f: expr, $($a: expr),*) => {
+//        println!($f, $($a),*);
+    };
+}
+
 #[derive(Default)]
 pub struct Xlsx2AdocTestResults {
     // Todo
@@ -64,38 +94,6 @@ fn decode_col_range(column_name: &str, length: usize) -> RangeInclusive<usize> {
     cl - 1..=ch - 1
 }
 
-fn find_col_width(sheet: &WorkSheet) -> Result<Vec<f64>, Error> {
-    let mut widths = Vec::<f64>::new();
-    let default_col_width = sheet.get_default_column().unwrap_or(1.0);
-
-    for _ in 0..sheet.max_column() {
-        widths.push(default_col_width);
-    }
-
-    let formatted_col_result = sheet.get_columns_with_format((1, 1, 1, 16384));
-    let formatted_col = match formatted_col_result {
-        Ok(f) => f,
-        Err(e) => return Err(error_text(&format!("{:?}", e))),
-    };
-
-    for w in formatted_col.iter() {
-        let column_name = w.0;
-        let a = w.1;
-        let columns_specs = a.0;
-        let column_width = columns_specs.width;
-        match column_width {
-            Some(width) => {
-                let col_range = decode_col_range(column_name, widths.len());
-                for c in col_range {
-                    widths[c] = width;
-                }
-            }
-            None => {},
-        };
-}
-    Ok(widths)
-}
-
 #[derive(Default)]
 struct Cell {
     text: String,
@@ -104,54 +102,265 @@ struct Cell {
     bg_bg_color: FormatColor,
 }
 
-fn get_cell(row: u32, col: u32, sheet: &WorkSheet, widths: &Vec<f64>) -> Cell {
-    let cell_content = sheet.read_cell((row + 1, col + 1)).unwrap_or_default();
-    let format = cell_content.format;
-    let mut cell = Cell::default();
-    if format.is_some() {
-        let format = format.unwrap();
-        cell.text_color = *format.get_color();
-        let ff = format.get_background().clone();
-        cell.bg_color = ff.fg_color;
-        cell.bg_bg_color = ff.bg_color;
+struct Rgb {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+struct ColorName<'a> {
+    name: &'a str,
+    rgb: Rgb,
+}
+
+struct ColorNames<'a> {
+    color_names: Vec<ColorName<'a>>,
+}
+
+impl<'a> ColorNames<'a> {
+    fn push<'b>(color_names: &mut Vec<ColorName<'b>>, name: &'b str, r: u8, g: u8, b: u8) {
+        let rgb = Rgb { r, g, b };
+        let color_name = ColorName { name, rgb };
+        color_names.push(color_name);
     }
 
-    let cell_text = cell_content.text;
-    cell.text = match cell_text {
-        Some(t) => t,
-        None => "".to_owned(),
-    };
-    cell
+    fn init() -> Self {
+        /*
+           con:folder[role=Aqua] Aqua          000 255 255
+           icon:folder[role=Black] Black       000 000 000
+           icon:folder[role=Blue] Blue         000 000 255
+           icon:folder[role=Fuchsia] Fuchsia   255 000 255
+           icon:folder[role=Gray] Gray         128 128 128
+           icon:folder[role=Green] Green       000 255 000
+           icon:folder[role=Lime] Lime         050 205 050
+           icon:folder[role=Maroon] Maroon     128 000 000
+           icon:folder[role=Navy] Navy         000 000 128
+           icon:folder[role=Olive] Olive       186 184 108
+           icon:folder[role=Purple] Purple     128 000 128
+           icon:folder[role=Red] Red           255 000 000
+           icon:folder[role=Silver] Silver     192 192 192
+           icon:folder[role=Teal] Teal         000 128 128
+           icon:folder[role=White] White       255 255 255
+           icon:folder[role=Yellow] Yellow     255 255 000
+        */
+
+        let mut color_names = Vec::<ColorName>::new();
+
+        macro_rules! push_color {
+            ($n:expr, $r:expr, $g:expr, $b:expr) => {
+                Self::push(&mut color_names, $n, $r, $g, $b);
+            };
+        }
+
+        push_color!("aqua", 0, 255, 255);
+        push_color!("black", 0, 0, 0);
+        push_color!("blue", 0, 0, 255);
+        push_color!("fuchsia", 255, 0, 255);
+        push_color!("gray", 128, 128, 128);
+        push_color!("green", 0, 255, 0);
+        push_color!("lime", 50, 205, 50);
+        push_color!("maroon", 128, 0, 0);
+        push_color!("navy", 0, 0, 128);
+        push_color!("olive", 186, 184, 108);
+        push_color!("purple", 128, 0, 128);
+        push_color!("red", 255, 0, 0);
+        push_color!("silver", 192, 192, 12);
+        push_color!("teal", 0, 128, 128);
+        push_color!("white", 255, 255, 255);
+        push_color!("yellow", 255, 255, 0);
+        Self { color_names }
+    }
+
+    fn decode_rgb(&self, r: u8, g: u8, b: u8) -> &str {
+        let mut min = 0xFFFF;
+        let mut name_min = "";
+        for n in &self.color_names {
+            let d = r as i32;
+            let d = d - (n.rgb.r as i32);
+            let d = d * d;
+            let mut dd = d;
+            let d = g as i32;
+            let d = d - (n.rgb.g as i32);
+            let d = d * d;
+            dd += d;
+            let d = b as i32;
+            let d = d - (n.rgb.b as i32);
+            let d = d * d;
+            dd += d;
+            if dd < min {
+                min = dd;
+                name_min = n.name;
+            }
+        }
+        print_debug!("-------------------- {} ({})", name_min, min);
+        name_min
+    }
 }
 
-fn write_tab_start(writer: &mut BufWriter<&mut File>, widths: &Vec<f64>) -> Result<(), Error> {
-    let bounds = "|===\r";
-    let line = tab_header(&widths);
-    writer.write_all(line.as_bytes())?;
-    writer.write_all(bounds.as_bytes())?;
-    Ok(())
+// const COLOR_NAMES: Vec<ColorName> = define_colors();
+
+struct XlsxConvertor<'a> {
+    sheet: &'a WorkSheet,
+    writer: BufWriter<&'a mut File>,
+    widths: Vec<f64>,
+    color_names: &'a ColorNames<'a>,
 }
 
-fn write_tab_end(writer: &mut BufWriter<&mut File>) -> Result<(), Error> {
-    let bounds = "|===\r";
-    writer.write_all(bounds.as_bytes())?;
-    Ok(())
-}
+impl<'a> XlsxConvertor<'a> {
+    fn new(
+        sheet: &'a WorkSheet,
+        writer: BufWriter<&'a mut File>,
+        color_names: &'a ColorNames<'a>,
+    ) -> Self {
+        XlsxConvertor {
+            sheet,
+            writer,
+            widths: Vec::<f64>::new(),
+            color_names,
+        }
+    }
 
-fn write_row_delimiter(writer: &mut BufWriter<&mut File>) -> Result<(), Error> {
-    writer.write_all("|".as_bytes())?;
-    Ok(())
-}
+    fn find_col_width(&mut self) -> Result<(), Error> {
+        let mut widths = Vec::<f64>::new();
 
+        // width 0 results in have the text fit in the field if possible"
+        let default_col_width = self.sheet.get_default_column().unwrap_or(0.0);
 
-fn write_col_end(writer: &mut BufWriter<&mut File>) -> Result<(), Error> {
-    writer.write_all("\r".as_bytes())?;
-    Ok(())
-}
+        print_debug!("Default Col Width: {}", default_col_width);
 
-fn write_cell(cell: &Cell, writer: &mut BufWriter<&mut File>) -> Result<(), Error> {
-    writer.write_all(cell.text.as_bytes())?;
-    Ok(())
+        for _ in 0..self.sheet.max_column() {
+            widths.push(default_col_width);
+        }
+
+        let formatted_col_result = self.sheet.get_columns_with_format((1, 1, 1, 16384));
+        let formatted_col = match formatted_col_result {
+            Ok(f) => f,
+            Err(e) => return Err(error_text(&format!("{:?}", e))),
+        };
+
+        for w in formatted_col.iter() {
+            let column_name = w.0;
+            let a = w.1;
+            let columns_specs = a.0;
+            let column_width = columns_specs.width;
+            if let Some(width) = column_width {
+                let col_range = decode_col_range(column_name, widths.len());
+                for c in col_range {
+                    widths[c] = width;
+                }
+            };
+        }
+        self.widths = widths;
+        Ok(())
+    }
+
+    fn write_tab_start(&mut self) -> Result<(), Error> {
+        let bounds = "|===\r";
+        let line = tab_header(&self.widths);
+        self.writer.write_all(line.as_bytes())?;
+        self.writer.write_all(bounds.as_bytes())?;
+        Ok(())
+    }
+
+    fn write_tab_end(&mut self) -> Result<(), Error> {
+        let bounds = "|===\r";
+        self.writer.write_all(bounds.as_bytes())?;
+        Ok(())
+    }
+
+    fn write_col_end(&mut self) -> Result<(), Error> {
+        self.writer.write_all("\r".as_bytes())?;
+        Ok(())
+    }
+
+    fn write_row_delimiter(&mut self) -> Result<(), Error> {
+        self.writer.write_all("|".as_bytes())?;
+        Ok(())
+    }
+
+    fn write_cell(&mut self, cell: &Cell) -> Result<(), Error> {
+        /*
+               let text = match cell.text_color {
+                   FormatColor::Default => cell.text.clone(),
+                   FormatColor::Index(_i) => cell.text.clone(),
+                   FormatColor::RGB(r, g, b) => {
+                       let trgb = format!("[{}]#", self.color_names.decode_rgb(r, g, b));
+                       trgb + &cell.text + "#"
+                   }
+                   FormatColor::Theme(_i, _f) => cell.text.clone(),
+               };
+        */
+        let text_color_str = match cell.text_color {
+            FormatColor::Default => None,
+            FormatColor::Index(_i) => None,
+            FormatColor::RGB(r, g, b) => Some(self.color_names.decode_rgb(r, g, b)),
+            FormatColor::Theme(_i, _f) => None,
+        };
+        let bg_color_str = match cell.bg_color {
+            FormatColor::Default => None,
+            FormatColor::Index(_i) => None,
+            FormatColor::RGB(r, g, b) => Some(self.color_names.decode_rgb(r, g, b)),
+            FormatColor::Theme(_i, _f) => None,
+        };
+        let text = match (text_color_str, bg_color_str) {
+            (None, None) => cell.text.clone(),
+            (Some(tc), None) => format!("[{}]#{}#", tc, cell.text),
+            (None, Some(bc)) => format!("[{}-background]#{}#", bc, cell.text),
+            (Some(tc), Some(bc)) => format!("[{} {}-background]#{}#", tc, bc, cell.text),
+        };
+
+        self.writer.write_all(text.as_bytes())?;
+        Ok(())
+    }
+
+    fn get_cell(&mut self, row: u32, col: u32) -> Cell {
+        let cell_content = self.sheet.read_cell((row + 1, col + 1)).unwrap_or_default();
+        let format = cell_content.format;
+        let mut cell = Cell::default();
+        if format.is_some() {
+            let format = format.unwrap();
+            cell.text_color = *format.get_color();
+            let ff = format.get_background().clone();
+            cell.bg_color = ff.fg_color;
+            cell.bg_bg_color = ff.bg_color;
+        }
+        /**/
+        let cell_format_string = format!(
+            "Text-Color = {:?}        bg = {:?}        bg_bg = {:?}",
+            cell.text_color, cell.bg_color, cell.bg_bg_color
+        );
+        /**/
+        let cell_text = cell_content.text;
+        cell.text = match cell_text {
+            Some(t) => t,
+            None => "".to_owned(),
+        };
+        /**/
+        print_debug!(
+            "{} ({}) -> {}     Format: {}",
+            col,
+            self.widths[(col) as usize],
+            cell.text,
+            cell_format_string
+        );
+        cell
+    }
+
+    fn write_cells(&mut self) -> Result<(), Error> {
+        for row in 0..self.sheet.max_row() {
+            /*
+                   print_debug!("Row {} ({})", row, hights[row as usize]);
+            */
+            for col in 0..self.sheet.max_column() {
+                if col < self.sheet.max_column() {
+                    self.write_row_delimiter()?;
+                }
+                let cell = self.get_cell(row, col);
+                self.write_cell(&cell)?;
+            }
+            self.write_col_end()?;
+        }
+        Ok(())
+    }
 }
 
 pub fn xlsx_convert(
@@ -174,51 +383,17 @@ pub fn xlsx_convert(
            hights.push(default_row_hight);
        }
     */
-    let widths = find_col_width(sheet)?;
-
     let mut output_file = File::create(out_file_name)?; // overwrites existing file
-    let mut writer = BufWriter::new(&mut output_file);
+    let writer = BufWriter::new(&mut output_file);
 
-    write_tab_start(&mut writer, &widths)?;
+    let color_names = ColorNames::init();
 
-    for row in 0..sheet.max_row() {
-        /*
-               println!("Row {} ({})", row, hights[row as usize]);
-        */
-        for col in 0..sheet.max_column() {
-            if col < sheet.max_column() {
-                write_row_delimiter(&mut writer)?;
-            }
-
-            let cell = get_cell(row, col, sheet, &widths);
-            write_cell(&cell, &mut writer)?;
-        }
-
-        write_col_end(&mut writer)?;
-    }
-    write_tab_end(&mut writer)?;
+    let mut xlsx_converter = XlsxConvertor::new(sheet, writer, &color_names);
+    xlsx_converter.find_col_width()?;
+    xlsx_converter.write_tab_start()?;
+    xlsx_converter.write_cells()?;
+    xlsx_converter.write_tab_end()?;
 
     let xlsx_2_adoc_test_results = Xlsx2AdocTestResults { v1: 0, v2: 0 };
     Ok(xlsx_2_adoc_test_results)
-}
-
-const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
-fn main() -> std::io::Result<()> {
-    let (in_file_name, out_file_name) = (
-        // Path::new("./tests/xlsx/yearly-calendar.xlsx"),
-        // Path::new("./tests/xlsx/business-budget.xlsx"),
-        Path::new("./tests/xlsx/accounting.xlsx"),
-        Path::new("./examples/_test.adoc"),
-        
-    );
-
-    println!(
-        "{} {} -> {}",
-        CARGO_PKG_NAME,
-        in_file_name.display(),
-        out_file_name.display()
-    );
-
-    xlsx_convert(&in_file_name, &out_file_name)?;
-    Ok(())
 }
